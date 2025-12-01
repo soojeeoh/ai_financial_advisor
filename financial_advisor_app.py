@@ -471,7 +471,32 @@ if submit_btn:
         display_table.columns = ['Ticker', 'Company', 'Price ($)', 'Fractional Shares', 'Invest ($)']
         st.dataframe(display_table, hide_index=True)
         
-        st.info(f"**Note:** Ensure your brokerage supports fractional shares. If not, round the 'Shares' to the nearest whole number based on the 'Invest ($)' amount.")
+        # Detailed explanation
+        st.markdown("#### 📋 How to Execute Your Strategy")
+        st.markdown("""
+        **Understanding the Table:**
+        - **Ticker:** The stock symbol you'll search for in your brokerage app
+        - **Price ($):** Current market price per share
+        - **Fractional Shares:** Exact number of shares to purchase (includes decimals)
+        - **Invest ($):** Total dollar amount to invest in this stock
+        
+        **Steps to Purchase:**
+        1. **Log into your brokerage account** (Robinhood, Fidelity, Charles Schwab, etc.)
+        2. **Search for each ticker** in the buy/trade section
+        3. **Select "Dollars" or "Shares"** as your order type:
+           - If buying by **dollars**: Enter the amount from the "Invest ($)" column
+           - If buying by **shares**: Enter the number from the "Fractional Shares" column
+        4. **Choose "Market Order"** for immediate purchase at current price
+        5. **Review and confirm** each purchase
+        
+        **Important Notes:**
+        - ✅ **Fractional Shares:** Most modern brokerages (Robinhood, Fidelity, Schwab) support fractional shares. If yours doesn't, round to whole numbers.
+        - 💡 **Timing:** Consider executing all trades at once to maintain your allocation strategy
+        - 📊 **Price Changes:** Stock prices fluctuate. Your final allocation may vary slightly from this plan
+        - 🔄 **Rebalancing:** Review your portfolio quarterly and rebalance if needed
+        """)
+        
+        st.warning("⚠️ **Reminder:** This is an educational tool. Always do your own research and consider consulting a licensed financial advisor before investing.")
     
     # Store data for PDF generation
     st.session_state.analysis_complete = True
