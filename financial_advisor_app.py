@@ -3,7 +3,14 @@ import yfinance as yf
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import time
+from datetime import datetime
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+import io
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -47,7 +54,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- The Stock Universe (Proxy for "Top 100") ---
-# A curated list of market movers across sectors to scan
 STOCK_UNIVERSE = [
     'MSFT', 'AAPL', 'NVDA', 'GOOGL', 'AMZN', 'META', 'BRK-B', 'LLY', 'TSLA', 'AVGO',
     'JPM', 'V', 'WMT', 'XOM', 'MA', 'UNH', 'PG', 'JNJ', 'HD', 'MRK',
@@ -61,7 +67,6 @@ STOCK_UNIVERSE = [
 def fetch_stock_data(tickers):
     """Fetches real-time data for the stock universe."""
     data = []
-    # Using a progress bar for user experience
     progress_bar = st.progress(0)
     total = len(tickers)
     
@@ -70,22 +75,20 @@ def fetch_stock_data(tickers):
             stock = yf.Ticker(ticker)
             info = stock.info
             
-            # Extract key metrics
             data.append({
                 'Ticker': ticker,
                 'Name': info.get('shortName', ticker),
                 'Price': info.get('currentPrice', 0),
                 'Sector': info.get('sector', 'Unknown'),
-                'Beta': info.get('beta', 1.0), # Risk metric
+                'Beta': info.get('beta', 1.0),
                 'PE': info.get('trailingPE', 0),
                 'DivYield': info.get('dividendYield', 0) if info.get('dividendYield') else 0,
                 'MarketCap': info.get('marketCap', 0),
                 'Description': info.get('longBusinessSummary', 'No description available.')
             })
         except Exception as e:
-            pass # Skip ticker if data fails
+            pass
         
-        # Update progress
         progress_bar.progress((i + 1) / total)
         
     progress_bar.empty()
@@ -93,33 +96,24 @@ def fetch_stock_data(tickers):
 
 def filter_stocks(df, risk_profile):
     """Filters stocks based on user risk tolerance."""
-    
-    # 1. Sort by Market Cap (Stability proxy) as a baseline
     df = df.sort_values(by='MarketCap', ascending=False)
     
     if risk_profile == 'Low':
-        # Focus on low volatility (Beta < 1.0) and dividends
-        filtered = df[ (df['Beta'] < 1.1) & (df['DivYield'] > 0.015) ]
+        filtered = df[(df['Beta'] < 1.1) & (df['DivYield'] > 0.015)]
         return filtered.head(10)
-    
     elif risk_profile == 'Medium':
-        # Balanced mix: Some growth (Beta < 1.4), some dividends
         filtered = df[df['Beta'] < 1.4]
         return filtered.head(10)
-    
-    else: # High
-        # Focus on Growth, allow higher volatility
+    else:
         return df.head(10)
 
 def generate_swot(row):
     """Simulates an AI SWOT analysis based on data fields."""
-    # This replaces the LLM generation for the standalone app
     strengths = []
     weaknesses = []
     opportunities = []
     threats = []
     
-    # Logic-based SWOT
     if row['MarketCap'] > 200_000_000_000:
         strengths.append("Dominant market leader with massive scale.")
     if row['DivYield'] > 0.02:
@@ -150,33 +144,199 @@ def generate_swot(row):
         "Threats": threats if threats else ["Economic headwinds."]
     }
 
-def calculate_allocation(df, total_budget, risk_profile):
-    """Allocates budget based on risk profile."""
-    # Simple weighted allocation logic
-    allocations = []
-    remaining_budget = total_budget
-    
-    # We will distribute based on a 'Safety Score' derived from Beta
-    # Lower beta = Higher allocation for Low Risk
+def select_optimal_stocks(df, risk_profile, budget):
+    """Select optimal subset of stocks based on risk profile and diversification."""
+    # Sort by a composite score
+    df = df.copy()
     
     if risk_profile == 'Low':
-        # Inverse weight to Beta (Lower beta gets more money)
-        df['Weight_Score'] = 1 / (df['Beta'] + 0.1) 
+        # Prioritize low beta and dividends
+        df['Score'] = (1 / (df['Beta'] + 0.1)) * 100 + (df['DivYield'] * 1000)
+        num_stocks = min(5, len(df))  # 5 stocks for diversification
+    elif risk_profile == 'Medium':
+        # Balance between stability and growth
+        df['Score'] = (df['MarketCap'] / 1e9) * (1 / (df['Beta'] + 0.1))
+        num_stocks = min(6, len(df))  # 6 stocks for balanced portfolio
+    else:  # High
+        # Focus on growth potential
+        df['Score'] = df['MarketCap'] / 1e9
+        num_stocks = min(7, len(df))  # 7 stocks for aggressive growth
+    
+    # Ensure sector diversification
+    df = df.sort_values('Score', ascending=False)
+    selected = []
+    sectors_used = set()
+    
+    # First pass: one per sector
+    for _, row in df.iterrows():
+        if row['Sector'] not in sectors_used and len(selected) < num_stocks:
+            selected.append(row)
+            sectors_used.add(row['Sector'])
+    
+    # Second pass: fill remaining slots with top scores
+    if len(selected) < num_stocks:
+        for _, row in df.iterrows():
+            if len(selected) >= num_stocks:
+                break
+            if not any(s['Ticker'] == row['Ticker'] for s in selected):
+                selected.append(row)
+    
+    return pd.DataFrame(selected)
+
+def calculate_allocation(df, total_budget, risk_profile):
+    """Allocates budget based on risk profile."""
+    allocations = []
+    
+    if risk_profile == 'Low':
+        df['Weight_Score'] = 1 / (df['Beta'] + 0.1)
     elif risk_profile == 'High':
-        # Direct weight to Beta (Higher volatility gets more money)
         df['Weight_Score'] = df['Beta']
     else:
-        # Equal weight roughly
         df['Weight_Score'] = 1
         
     total_score = df['Weight_Score'].sum()
     df['Allocation_Amt'] = (df['Weight_Score'] / total_score) * total_budget
-    
-    # Rounding
     df['Allocation_Amt'] = df['Allocation_Amt'].round(2)
     df['Shares'] = (df['Allocation_Amt'] / df['Price']).round(4)
     
     return df
+
+def generate_pdf_report(user_profile, allocated_df, swot_data):
+    """Generate a PDF report of the investment strategy."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch)
+    styles = getSampleStyleSheet()
+    story = []
+    
+    # Custom styles
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor=colors.HexColor('#1E88E5'),
+        spaceAfter=30,
+        alignment=TA_CENTER
+    )
+    
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=16,
+        textColor=colors.HexColor('#424242'),
+        spaceAfter=12,
+        spaceBefore=12
+    )
+    
+    # Title
+    story.append(Paragraph("WealthGenie Investment Strategy Report", title_style))
+    story.append(Spacer(1, 0.2*inch))
+    
+    # Date
+    story.append(Paragraph(f"<b>Generated:</b> {datetime.now().strftime('%B %d, %Y at %I:%M %p')}", styles['Normal']))
+    story.append(Spacer(1, 0.3*inch))
+    
+    # User Profile Section
+    story.append(Paragraph("User Profile", heading_style))
+    profile_data = [
+        ['Job/Occupation:', user_profile['job']],
+        ['Total Budget:', f"${user_profile['budget']:,.2f}"],
+        ['Risk Tolerance:', user_profile['risk']],
+        ['Investment Goal:', user_profile['goal']],
+        ['Knowledge Level:', user_profile['knowledge']],
+        ['Target Market:', user_profile['market']]
+    ]
+    profile_table = Table(profile_data, colWidths=[2*inch, 4*inch])
+    profile_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#E3F2FD')),
+        ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)
+    ]))
+    story.append(profile_table)
+    story.append(Spacer(1, 0.3*inch))
+    
+    # Investment Allocation
+    story.append(Paragraph("Recommended Investment Allocation", heading_style))
+    
+    alloc_data = [['Ticker', 'Company', 'Price', 'Shares', 'Investment', 'Allocation %']]
+    total_budget = user_profile['budget']
+    
+    for _, row in allocated_df.iterrows():
+        alloc_pct = (row['Allocation_Amt'] / total_budget) * 100
+        alloc_data.append([
+            row['Ticker'],
+            row['Name'][:25] + '...' if len(row['Name']) > 25 else row['Name'],
+            f"${row['Price']:.2f}",
+            f"{row['Shares']:.4f}",
+            f"${row['Allocation_Amt']:.2f}",
+            f"{alloc_pct:.1f}%"
+        ])
+    
+    alloc_table = Table(alloc_data, colWidths=[0.8*inch, 2*inch, 0.8*inch, 0.8*inch, 1*inch, 1*inch])
+    alloc_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E88E5')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ('TOPPADDING', (0, 1), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 6)
+    ]))
+    story.append(alloc_table)
+    story.append(Spacer(1, 0.3*inch))
+    
+    # SWOT Analysis for each stock
+    story.append(PageBreak())
+    story.append(Paragraph("Detailed SWOT Analysis", heading_style))
+    story.append(Spacer(1, 0.2*inch))
+    
+    for ticker, swot in swot_data.items():
+        stock_info = allocated_df[allocated_df['Ticker'] == ticker].iloc[0]
+        
+        story.append(Paragraph(f"<b>{ticker} - {stock_info['Name']}</b>", styles['Heading3']))
+        story.append(Paragraph(f"<i>Sector: {stock_info['Sector']} | Price: ${stock_info['Price']:.2f} | Beta: {stock_info['Beta']:.2f}</i>", styles['Normal']))
+        story.append(Spacer(1, 0.1*inch))
+        
+        # SWOT details
+        swot_sections = [
+            ('<b>Strengths:</b>', swot['Strengths']),
+            ('<b>Weaknesses:</b>', swot['Weaknesses']),
+            ('<b>Opportunities:</b>', swot['Opportunities']),
+            ('<b>Threats:</b>', swot['Threats'])
+        ]
+        
+        for section_title, items in swot_sections:
+            story.append(Paragraph(section_title, styles['Normal']))
+            for item in items:
+                story.append(Paragraph(f"• {item}", styles['Normal']))
+            story.append(Spacer(1, 0.05*inch))
+        
+        story.append(Spacer(1, 0.2*inch))
+    
+    # Disclaimer
+    story.append(PageBreak())
+    story.append(Paragraph("Important Disclaimer", heading_style))
+    disclaimer_text = """
+    This report is for informational purposes only and does not constitute financial advice. 
+    Past performance does not guarantee future results. All investments carry risk, including 
+    the potential loss of principal. Please consult with a licensed financial advisor before 
+    making any investment decisions. WealthGenie is a demonstration tool and should not be 
+    used as the sole basis for investment decisions.
+    """
+    story.append(Paragraph(disclaimer_text, styles['Normal']))
+    
+    # Build PDF
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
 
 # --- Sidebar: User Profile ---
 with st.sidebar:
@@ -198,14 +358,15 @@ st.markdown('<div class="main-header">WealthGenie Financial Advisor</div>', unsa
 st.markdown(f"**Current Strategy for:** {job} | **Budget:** ${budget:,.2f} | **Risk:** {risk}")
 
 if submit_btn:
-    # --- Step 2: Search & Filter ---
+    # Store data in session state for PDF generation
+    if 'analysis_complete' not in st.session_state:
+        st.session_state.analysis_complete = False
+    
+    # --- Step 1 & 2: Market Scan & Filtering ---
     st.markdown('<div class="sub-header">Step 1 & 2: Market Scan & Filtering</div>', unsafe_allow_html=True)
     st.write(f"Scanning market leaders for **{risk}** risk profile...")
     
-    # Fetch Data
     raw_df = fetch_stock_data(STOCK_UNIVERSE)
-    
-    # Filter Data
     top_10_df = filter_stocks(raw_df, risk)
     
     st.success(f"Identified {len(top_10_df)} companies matching your {risk} risk profile.")
@@ -213,8 +374,10 @@ if submit_btn:
     # --- Step 3: Analysis (SWOT) ---
     st.markdown('<div class="sub-header">Step 3: AI Analysis (SWOT)</div>', unsafe_allow_html=True)
     
+    swot_data = {}
     for index, row in top_10_df.iterrows():
         swot = generate_swot(row)
+        swot_data[row['Ticker']] = swot
         
         with st.expander(f"📊 {row['Ticker']} - {row['Name']} (${row['Price']})"):
             c1, c2 = st.columns(2)
@@ -231,10 +394,13 @@ if submit_btn:
             
             st.caption(f"Sector: {row['Sector']} | Beta: {row['Beta']} | Div Yield: {row['DivYield']:.2%}")
 
-    # --- Step 4: Allocation ---
+    # --- Step 4: Optimal Selection & Allocation ---
     st.markdown('<div class="sub-header">Step 4: Your Investment Strategy</div>', unsafe_allow_html=True)
     
-    allocated_df = calculate_allocation(top_10_df, budget, risk)
+    optimal_stocks = select_optimal_stocks(top_10_df, risk, budget)
+    allocated_df = calculate_allocation(optimal_stocks, budget, risk)
+    
+    st.info(f"✨ **Strategy:** Based on your profile, we've selected **{len(allocated_df)}** stocks out of 10 candidates for optimal diversification and risk management.")
     
     # Display Allocation Metrics
     col1, col2 = st.columns([1, 2])
@@ -254,6 +420,58 @@ if submit_btn:
         st.dataframe(display_table, hide_index=True)
         
         st.info(f"**Note:** Ensure your brokerage supports fractional shares. If not, round the 'Shares' to the nearest whole number based on the 'Invest ($)' amount.")
+    
+    # Store data for PDF generation
+    st.session_state.analysis_complete = True
+    st.session_state.user_profile = {
+        'job': job,
+        'budget': budget,
+        'risk': risk,
+        'goal': goal,
+        'knowledge': knowledge,
+        'market': market
+    }
+    st.session_state.allocated_df = allocated_df
+    st.session_state.swot_data = {k: v for k, v in swot_data.items() if k in allocated_df['Ticker'].values}
+    
+    # --- PDF Generation Button ---
+    st.markdown('<div class="sub-header">Export Your Strategy</div>', unsafe_allow_html=True)
+    
+    if st.button("📄 Generate PDF Report", type="primary"):
+        with st.spinner("Generating your personalized PDF report..."):
+            pdf_buffer = generate_pdf_report(
+                st.session_state.user_profile,
+                st.session_state.allocated_df,
+                st.session_state.swot_data
+            )
+            
+            st.download_button(
+                label="⬇️ Download PDF Report",
+                data=pdf_buffer,
+                file_name=f"WealthGenie_Strategy_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                mime="application/pdf"
+            )
+            st.success("✅ PDF Report generated successfully!")
+
+elif st.session_state.get('analysis_complete', False):
+    # Show PDF button if analysis was already done
+    st.markdown('<div class="sub-header">Export Your Strategy</div>', unsafe_allow_html=True)
+    
+    if st.button("📄 Generate PDF Report", type="primary"):
+        with st.spinner("Generating your personalized PDF report..."):
+            pdf_buffer = generate_pdf_report(
+                st.session_state.user_profile,
+                st.session_state.allocated_df,
+                st.session_state.swot_data
+            )
+            
+            st.download_button(
+                label="⬇️ Download PDF Report",
+                data=pdf_buffer,
+                file_name=f"WealthGenie_Strategy_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                mime="application/pdf"
+            )
+            st.success("✅ PDF Report generated successfully!")
 
 else:
     # --- Landing Page State ---
@@ -265,5 +483,7 @@ else:
     2. **Real-Time Scanning:** We fetch live data from the top 50 US companies.
     3. **Intelligent Filtering:** We select the 10 best stocks for YOU.
     4. **SWOT Analysis:** We evaluate the Strengths and Weaknesses of each pick.
-    5. **Allocation Plan:** We tell you exactly how much to buy.
+    5. **Optimal Selection:** We choose the best subset for your portfolio.
+    6. **Allocation Plan:** We tell you exactly how much to buy.
+    7. **PDF Export:** Download your complete investment strategy report.
     """)
