@@ -14,7 +14,7 @@ import io
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="WealthGenie | Simple AI Financial Advisor",
+    page_title="Stock Buddy | Simple AI Financial Advisor",
     page_icon="💸",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -297,7 +297,7 @@ def generate_pdf_report(user_profile, allocated_df, swot_data):
     )
     
     # Title
-    story.append(Paragraph("WealthGenie Investment Plan", title_style))
+    story.append(Paragraph("Stock Buddy Investment Plan", title_style))
     story.append(Spacer(1, 0.2*inch))
     
     # Date
@@ -399,7 +399,7 @@ def generate_pdf_report(user_profile, allocated_df, swot_data):
     disclaimer_text = """
     This report is for learning purposes only. It is not official financial advice. 
     Stocks can go down as well as up, and you could lose money. Always talk to a 
-    certified professional before investing real money. WealthGenie is a demonstration tool.
+    certified professional before investing real money. Stock Buddy is a demonstration tool.
     """
     story.append(Paragraph(disclaimer_text, styles['Normal']))
     
@@ -424,7 +424,7 @@ with st.sidebar:
         submit_btn = st.form_submit_button("Create My Plan")
 
 # --- Main Content ---
-st.markdown('<div class="main-header">WealthGenie Financial Advisor</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">Stock Buddy Financial Advisor</div>', unsafe_allow_html=True)
 st.markdown(f"**Current Strategy for:** {job} | **Budget:** ${budget:,.2f} | **Risk:** {risk}")
 
 if submit_btn:
@@ -598,7 +598,7 @@ if submit_btn:
             st.download_button(
                 label="⬇️ Click here to Download PDF",
                 data=pdf_buffer,
-                file_name=f"WealthGenie_Plan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                file_name=f"StockBuddy_Plan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
                 mime="application/pdf"
             )
             st.success("✅ Report ready! Check your downloads folder.")
@@ -618,7 +618,7 @@ elif st.session_state.get('analysis_complete', False):
             st.download_button(
                 label="⬇️ Click here to Download PDF",
                 data=pdf_buffer,
-                file_name=f"WealthGenie_Plan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                file_name=f"StockBuddy_Plan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
                 mime="application/pdf"
             )
             st.success("✅ Report ready! Check your downloads folder.")
@@ -636,3 +636,4 @@ else:
     5. **We make a plan:** We tell you exactly what to buy and how much to spend.
     6. **Download:** You get a nice PDF to keep.
     """)
+
