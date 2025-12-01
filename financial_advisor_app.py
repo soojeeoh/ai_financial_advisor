@@ -14,7 +14,7 @@ import io
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="Stock Buddy | Simple AI Financial Advisor",
+    page_title="Stock Buddy | Simple AI Financial Advisor 🩵",
     page_icon="💸",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -636,5 +636,6 @@ else:
     5. **We make a plan:** We tell you exactly what to buy and how much to spend.
     6. **Download:** You get a nice PDF to keep.
     """)
+
 
 
