@@ -297,7 +297,7 @@ def generate_pdf_report(user_profile, allocated_df, swot_data):
     )
     
     # Title
-    story.append(Paragraph("Stock Buddy Investment Plan", title_style))
+    story.append(Paragraph("Stock Buddy Investment Plan 🩵", title_style))
     story.append(Spacer(1, 0.2*inch))
     
     # Date
@@ -636,4 +636,5 @@ else:
     5. **We make a plan:** We tell you exactly what to buy and how much to spend.
     6. **Download:** You get a nice PDF to keep.
     """)
+
 
