@@ -195,14 +195,17 @@ def select_optimal_stocks(df, risk_profile, budget):
         # Prioritize low beta and dividends
         df['Score'] = (1 / (df['Beta'] + 0.1)) * 100 + (df['DivYield'] * 1000)
         num_stocks = min(5, len(df))  # 5 stocks for diversification
+        strategy_reason = "Low risk investors benefit from fewer, more stable holdings with dividend income."
     elif risk_profile == 'Medium':
         # Balance between stability and growth
         df['Score'] = (df['MarketCap'] / 1e9) * (1 / (df['Beta'] + 0.1))
         num_stocks = min(6, len(df))  # 6 stocks for balanced portfolio
+        strategy_reason = "Moderate risk portfolios balance growth potential with stability through diversification."
     else:  # High
         # Focus on growth potential
         df['Score'] = df['MarketCap'] / 1e9
         num_stocks = min(7, len(df))  # 7 stocks for aggressive growth
+        strategy_reason = "Aggressive portfolios maximize growth through broader diversification across market leaders."
     
     # Ensure sector diversification
     df = df.sort_values('Score', ascending=False)
@@ -223,7 +226,8 @@ def select_optimal_stocks(df, risk_profile, budget):
             if not any(s['Ticker'] == row['Ticker'] for s in selected):
                 selected.append(row)
     
-    return pd.DataFrame(selected)
+    result_df = pd.DataFrame(selected)
+    return result_df, strategy_reason
 
 def calculate_allocation(df, total_budget, risk_profile):
     """Allocates budget based on risk profile."""
@@ -231,17 +235,20 @@ def calculate_allocation(df, total_budget, risk_profile):
     
     if risk_profile == 'Low':
         df['Weight_Score'] = 1 / (df['Beta'] + 0.1)
+        allocation_logic = "Lower volatility stocks receive larger allocations to minimize risk exposure."
     elif risk_profile == 'High':
         df['Weight_Score'] = df['Beta']
+        allocation_logic = "Higher volatility stocks receive larger allocations to maximize growth potential."
     else:
         df['Weight_Score'] = 1
+        allocation_logic = "Equal weighting balances risk and reward across all holdings."
         
     total_score = df['Weight_Score'].sum()
     df['Allocation_Amt'] = (df['Weight_Score'] / total_score) * total_budget
     df['Allocation_Amt'] = df['Allocation_Amt'].round(2)
     df['Shares'] = (df['Allocation_Amt'] / df['Price']).round(4)
     
-    return df
+    return df, allocation_logic
 
 def generate_pdf_report(user_profile, allocated_df, swot_data):
     """Generate a PDF report of the investment strategy."""
@@ -449,10 +456,76 @@ if submit_btn:
     # --- Step 4: Optimal Selection & Allocation ---
     st.markdown('<div class="sub-header">Step 4: Your Investment Strategy</div>', unsafe_allow_html=True)
     
-    optimal_stocks = select_optimal_stocks(top_10_df, risk, budget)
-    allocated_df = calculate_allocation(optimal_stocks, budget, risk)
+    optimal_stocks, strategy_reason = select_optimal_stocks(top_10_df, risk, budget)
+    allocated_df, allocation_logic = calculate_allocation(optimal_stocks, budget, risk)
     
-    st.info(f"✨ **Strategy:** Based on your profile, we've selected **{len(allocated_df)}** stocks out of 10 candidates for optimal diversification and risk management.")
+    # Generate personalized explanation
+    st.markdown("### 📋 Strategy Explanation")
+    
+    explanation_col1, explanation_col2 = st.columns([1, 1])
+    
+    with explanation_col1:
+        st.markdown("#### Why These Stocks?")
+        st.write(f"**Selection Criteria for {risk} Risk Profile:**")
+        
+        if risk == 'Low':
+            st.markdown("""
+            - ✅ **Low Volatility (Beta < 1.1):** Stocks that move less than the market
+            - ✅ **Dividend Payers:** Companies that provide steady income
+            - ✅ **Large Market Cap:** Established, financially stable companies
+            - ✅ **Sector Diversification:** Spread across different industries to reduce risk
+            """)
+        elif risk == 'Medium':
+            st.markdown("""
+            - ✅ **Balanced Volatility (Beta < 1.4):** Moderate market movement
+            - ✅ **Growth + Income Mix:** Combination of growth stocks and dividend payers
+            - ✅ **Strong Market Position:** Well-established companies with growth potential
+            - ✅ **Sector Diversification:** Balanced exposure across multiple sectors
+            """)
+        else:  # High
+            st.markdown("""
+            - ✅ **Growth Focus:** Market leaders with high growth potential
+            - ✅ **Higher Volatility Accepted:** Willing to accept market swings for returns
+            - ✅ **Innovation Leaders:** Companies at the forefront of their industries
+            - ✅ **Broad Diversification:** More stocks to capture various opportunities
+            """)
+        
+        st.info(f"💡 **Portfolio Size:** {strategy_reason}")
+    
+    with explanation_col2:
+        st.markdown("#### Why These Percentages?")
+        st.write(f"**Allocation Method for {risk} Risk:**")
+        st.markdown(f"_{allocation_logic}_")
+        
+        # Show specific allocation reasoning
+        st.markdown("**Your Allocations:**")
+        for _, row in allocated_df.iterrows():
+            pct = (row['Allocation_Amt'] / budget) * 100
+            
+            reason = ""
+            if risk == 'Low':
+                if row['Beta'] < 0.9:
+                    reason = f"(Very stable, Beta: {row['Beta']:.2f})"
+                elif row['DivYield'] > 0.025:
+                    reason = f"(Strong dividend: {row['DivYield']*100:.2f}%)"
+                else:
+                    reason = f"(Stable, Beta: {row['Beta']:.2f})"
+            elif risk == 'Medium':
+                if row['MarketCap'] > 500_000_000_000:
+                    reason = f"(Market leader: ${row['MarketCap']/1e9:.0f}B)"
+                else:
+                    reason = f"(Growth potential in {row['Sector']})"
+            else:  # High
+                if row['Beta'] > 1.2:
+                    reason = f"(High growth, Beta: {row['Beta']:.2f})"
+                else:
+                    reason = f"(Market leader: ${row['MarketCap']/1e9:.0f}B)"
+            
+            st.markdown(f"- **{row['Ticker']}:** {pct:.1f}% {reason}")
+    
+    st.markdown("---")
+    
+    st.info(f"✨ **Final Strategy:** Based on your **{job}** profile with a **${budget:,}** budget seeking **{goal.lower()}**, we've selected **{len(allocated_df)}** stocks out of 10 candidates for optimal diversification and risk management.")
     
     # Display Allocation Metrics
     col1, col2 = st.columns([1, 2])
@@ -471,32 +544,7 @@ if submit_btn:
         display_table.columns = ['Ticker', 'Company', 'Price ($)', 'Fractional Shares', 'Invest ($)']
         st.dataframe(display_table, hide_index=True)
         
-        # Detailed explanation
-        st.markdown("#### 📋 How to Execute Your Strategy")
-        st.markdown("""
-        **Understanding the Table:**
-        - **Ticker:** The stock symbol you'll search for in your brokerage app
-        - **Price ($):** Current market price per share
-        - **Fractional Shares:** Exact number of shares to purchase (includes decimals)
-        - **Invest ($):** Total dollar amount to invest in this stock
-        
-        **Steps to Purchase:**
-        1. **Log into your brokerage account** (Robinhood, Fidelity, Charles Schwab, etc.)
-        2. **Search for each ticker** in the buy/trade section
-        3. **Select "Dollars" or "Shares"** as your order type:
-           - If buying by **dollars**: Enter the amount from the "Invest ($)" column
-           - If buying by **shares**: Enter the number from the "Fractional Shares" column
-        4. **Choose "Market Order"** for immediate purchase at current price
-        5. **Review and confirm** each purchase
-        
-        **Important Notes:**
-        - ✅ **Fractional Shares:** Most modern brokerages (Robinhood, Fidelity, Schwab) support fractional shares. If yours doesn't, round to whole numbers.
-        - 💡 **Timing:** Consider executing all trades at once to maintain your allocation strategy
-        - 📊 **Price Changes:** Stock prices fluctuate. Your final allocation may vary slightly from this plan
-        - 🔄 **Rebalancing:** Review your portfolio quarterly and rebalance if needed
-        """)
-        
-        st.warning("⚠️ **Reminder:** This is an educational tool. Always do your own research and consider consulting a licensed financial advisor before investing.")
+        st.info(f"**Note:** Ensure your brokerage supports fractional shares. If not, round the 'Shares' to the nearest whole number based on the 'Invest ($)' amount.")
     
     # Store data for PDF generation
     st.session_state.analysis_complete = True
