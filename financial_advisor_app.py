@@ -75,34 +75,76 @@ def fetch_stock_data(tickers):
             stock = yf.Ticker(ticker)
             info = stock.info
             
-            data.append({
-                'Ticker': ticker,
-                'Name': info.get('shortName', ticker),
-                'Price': info.get('currentPrice', 0),
-                'Sector': info.get('sector', 'Unknown'),
-                'Beta': info.get('beta', 1.0),
-                'PE': info.get('trailingPE', 0),
-                'DivYield': info.get('dividendYield', 0) if info.get('dividendYield') else 0,
-                'MarketCap': info.get('marketCap', 0),
-                'Description': info.get('longBusinessSummary', 'No description available.')
-            })
+            # Get current price with fallback options
+            current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
+            if current_price == 0 or current_price is None:
+                # Try to get from history
+                hist = stock.history(period='1d')
+                if not hist.empty:
+                    current_price = hist['Close'].iloc[-1]
+                else:
+                    current_price = 0
+            
+            # Only add stock if we have a valid price and market cap
+            market_cap = info.get('marketCap', 0)
+            if current_price > 0 and market_cap > 0:
+                data.append({
+                    'Ticker': ticker,
+                    'Name': info.get('shortName', info.get('longName', ticker)),
+                    'Price': float(current_price),
+                    'Sector': info.get('sector', 'Unknown'),
+                    'Beta': float(info.get('beta', 1.0)) if info.get('beta') else 1.0,
+                    'PE': float(info.get('trailingPE', 0)) if info.get('trailingPE') else 0,
+                    'DivYield': float(info.get('dividendYield', 0)) if info.get('dividendYield') else 0,
+                    'MarketCap': int(market_cap),
+                    'Description': info.get('longBusinessSummary', 'No description available.')
+                })
         except Exception as e:
-            pass
+            # Skip ticker if data fails
+            continue
         
         progress_bar.progress((i + 1) / total)
         
     progress_bar.empty()
-    return pd.DataFrame(data)
+    df = pd.DataFrame(data)
+    
+    # Ensure all required columns exist
+    required_cols = ['Ticker', 'Name', 'Price', 'Sector', 'Beta', 'PE', 'DivYield', 'MarketCap', 'Description']
+    for col in required_cols:
+        if col not in df.columns:
+            if col == 'MarketCap':
+                df[col] = 0
+            elif col in ['Price', 'Beta', 'PE', 'DivYield']:
+                df[col] = 0.0
+            else:
+                df[col] = ''
+    
+    return df
 
 def filter_stocks(df, risk_profile):
     """Filters stocks based on user risk tolerance."""
+    # Remove any rows with missing critical data
+    df = df[df['MarketCap'] > 0].copy()
+    df = df[df['Price'] > 0].copy()
+    
+    if len(df) == 0:
+        st.error("Unable to fetch sufficient stock data. Please try again.")
+        return pd.DataFrame()
+    
     df = df.sort_values(by='MarketCap', ascending=False)
     
     if risk_profile == 'Low':
         filtered = df[(df['Beta'] < 1.1) & (df['DivYield'] > 0.015)]
+        # If not enough stocks match criteria, relax constraints
+        if len(filtered) < 5:
+            filtered = df[df['Beta'] < 1.2]
+        if len(filtered) < 5:
+            filtered = df
         return filtered.head(10)
     elif risk_profile == 'Medium':
         filtered = df[df['Beta'] < 1.4]
+        if len(filtered) < 5:
+            filtered = df
         return filtered.head(10)
     else:
         return df.head(10)
@@ -367,7 +409,17 @@ if submit_btn:
     st.write(f"Scanning market leaders for **{risk}** risk profile...")
     
     raw_df = fetch_stock_data(STOCK_UNIVERSE)
+    
+    # Check if we got enough data
+    if len(raw_df) < 5:
+        st.error("⚠️ Unable to fetch sufficient stock data. Please try again in a few moments.")
+        st.stop()
+    
     top_10_df = filter_stocks(raw_df, risk)
+    
+    if len(top_10_df) == 0:
+        st.error("⚠️ No stocks found matching criteria. Please try again.")
+        st.stop()
     
     st.success(f"Identified {len(top_10_df)} companies matching your {risk} risk profile.")
     
